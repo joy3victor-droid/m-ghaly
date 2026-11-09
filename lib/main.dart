@@ -819,6 +819,7 @@ audioPlayer.dispose();
           ),
 // ===== AUDIO TRACK =====
 
+
 Container(
   width: double.infinity,
   margin: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
@@ -845,7 +846,7 @@ Container(
         ),
       ),
 
-      if (audioFilePath != null)
+      if (audioFilePath != null) ...[
         IconButton(
           onPressed: () async {
             if (isAudioPlaying) {
@@ -866,7 +867,30 @@ Container(
           ),
         ),
 
+        // DELETE AUDIO
+        IconButton(
+          tooltip: 'حذف الصوت',
+          onPressed: () async {
+            await audioPlayer.stop();
+
+            if (!mounted) return;
+
+            setState(() {
+              audioFilePath = null;
+              audioFileName = null;
+              isAudioPlaying = false;
+            });
+          },
+          icon: const Icon(
+            Icons.delete,
+            color: Colors.red,
+          ),
+        ),
+      ],
+
+      // ADD OR REPLACE AUDIO
       IconButton(
+        tooltip: 'إضافة أو استبدال الصوت',
         onPressed: addAudio,
         icon: const Icon(
           Icons.add_circle,
@@ -876,6 +900,7 @@ Container(
     ],
   ),
 ),
+
           // ===== TIMELINE =====
 
           SizedBox(

@@ -7,6 +7,9 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:video_trimmer/video_trimmer.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:file_picker/file_picker.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -143,7 +146,10 @@ class _ProjectScreenState extends State<ProjectScreen> {
   late List<XFile> files;
 
   VideoPlayerController? controller;
-
+    final AudioPlayer audioPlayer = AudioPlayer();
+  String? audioFilePath;
+  String? audioFileName;
+  bool isAudioPlaying = false; 
   int selectedIndex = 0;
   int loadRequestId = 0;
 
@@ -155,6 +161,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
   VideoPlayerController? lastCompletedController;
 
   final Map<String, Future<Uint8List?>> thumbnails = {};
+  final Map<String, Future<Duration?>> videoDurations = {};
 
   @override
   void initState() {
@@ -182,6 +189,67 @@ class _ProjectScreenState extends State<ProjectScreen> {
         imageFormat: ImageFormat.JPEG,
         maxWidth: 240,
         quality: 65,
+      ),
+    );
+  }
+
+  // ================= VIDEO DURATION =================
+
+  Future<Duration?> getVideoDuration(String path) {
+    return videoDurations.putIfAbsent(path, () async {
+      final videoController = VideoPlayerController.file(
+        File(path),
+      );
+
+      try {
+        await videoController.initialize();
+        return videoController.value.duration;
+      } catch (e) {
+        return null;
+      } finally {
+        await videoController.dispose();
+      }
+    });
+  }
+
+  // ================= OPEN VIDEO TRIMMER =================
+
+  Future<void> openTrimScreen() async {
+    if (files.isEmpty ||
+        selectedIndex < 0 ||
+        selectedIndex >= files.length) {
+      return;
+    }
+
+    final selectedFile = files[selectedIndex];
+
+    final outputPath = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VideoTrimScreen(
+          file: File(selectedFile.path),
+        ),
+      ),
+    );
+
+    if (!mounted || outputPath == null || outputPath.isEmpty) return;
+
+    final alreadyAdded = files.any((file) => file.path == outputPath);
+    if (alreadyAdded) return;
+
+    final newIndex = selectedIndex + 1;
+
+    setState(() {
+      files.insert(newIndex, XFile(outputPath));
+    });
+
+    await loadVideo(newIndex);
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('تم حفظ الفيديو المقصوص وإضافته إلى Timeline'),
       ),
     );
   }
@@ -228,7 +296,43 @@ class _ProjectScreenState extends State<ProjectScreen> {
       ),
     );
   }
+  // ================= ADD AUDIO =================
 
+ Future<void> addAudio() async {
+    final result = await FilePicker.pickFile(
+      type: FileType.audio,
+    );
+
+    if (result == null || result.path == null) return;
+
+    final path = result.path!;
+
+    try {
+      await audioPlayer.setFilePath(path);
+
+      if (!mounted) return;
+
+      setState(() {
+        audioFilePath = path;
+        audioFileName = result.name;
+        isAudioPlaying = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تمت إضافة الملف الصوتي بنجاح'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('تعذر فتح الملف الصوتي: $e'),
+        ),
+      );
+    }
+  }
   // ================= LOAD VIDEO =================
 
   Future<void> loadVideo(
@@ -425,6 +529,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
     setState(() {
       files.removeAt(index);
       thumbnails.remove(deletedPath);
+      videoDurations.remove(deletedPath);
 
       if (files.isEmpty) {
         selectedIndex = 0;
@@ -520,7 +625,8 @@ class _ProjectScreenState extends State<ProjectScreen> {
     loadRequestId++;
 
     controller?.removeListener(handleVideoProgress);
-    controller?.dispose();
+controller?.dispose();
+audioPlayer.dispose();
 
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
@@ -537,11 +643,27 @@ class _ProjectScreenState extends State<ProjectScreen> {
 
     return Scaffold(
       backgroundColor: const Color(0xFF101116),
-
       appBar: AppBar(
         title: const Text('M-GHALY Editor'),
         backgroundColor: const Color(0xFF191A22),
         actions: [
+          IconButton(
+            tooltip: 'قص الفيديو المحدد',
+            onPressed: files.isEmpty
+                ? null
+                : () {
+                    unawaited(openTrimScreen());
+                  },
+            icon: const Icon(
+              Icons.content_cut,
+              color: Colors.orange,
+              size: 28,
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.only(right: 8),
+            child: Center(child: Text('قص')),
+          ),
           IconButton(
             tooltip: 'إضافة فيديو',
             onPressed: () {
@@ -561,7 +683,6 @@ class _ProjectScreenState extends State<ProjectScreen> {
           ),
         ],
       ),
-
       body: Column(
         children: [
           // ===== VIDEO PREVIEW =====
@@ -637,7 +758,6 @@ class _ProjectScreenState extends State<ProjectScreen> {
                                       );
                                     },
                                   ),
-
                                   Slider(
                                     value: currentValue,
                                     min: 0,
@@ -655,7 +775,6 @@ class _ProjectScreenState extends State<ProjectScreen> {
                                       );
                                     },
                                   ),
-
                                   Row(
                                     mainAxisAlignment:
                                         MainAxisAlignment.spaceBetween,
@@ -698,7 +817,65 @@ class _ProjectScreenState extends State<ProjectScreen> {
               ),
             ),
           ),
+// ===== AUDIO TRACK =====
 
+Container(
+  width: double.infinity,
+  margin: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+  padding: const EdgeInsets.all(8),
+  decoration: BoxDecoration(
+    color: const Color(0xFF252630),
+    border: Border.all(color: Colors.green),
+    borderRadius: BorderRadius.circular(8),
+  ),
+  child: Row(
+    children: [
+      const Icon(
+        Icons.audiotrack,
+        color: Colors.green,
+      ),
+      const SizedBox(width: 8),
+
+      Expanded(
+        child: Text(
+          audioFileName ?? 'مسار الصوت - لم تتم إضافة صوت',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: Colors.white),
+        ),
+      ),
+
+      if (audioFilePath != null)
+        IconButton(
+          onPressed: () async {
+            if (isAudioPlaying) {
+              await audioPlayer.pause();
+            } else {
+              await audioPlayer.play();
+            }
+
+            if (mounted) {
+              setState(() {
+                isAudioPlaying = !isAudioPlaying;
+              });
+            }
+          },
+          icon: Icon(
+            isAudioPlaying ? Icons.pause : Icons.play_arrow,
+            color: Colors.green,
+          ),
+        ),
+
+      IconButton(
+        onPressed: addAudio,
+        icon: const Icon(
+          Icons.add_circle,
+          color: Colors.green,
+        ),
+      ),
+    ],
+  ),
+),
           // ===== TIMELINE =====
 
           SizedBox(
@@ -712,10 +889,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 5),
                     itemCount: files.length,
                     onReorderItem: reorderVideos,
-
-                    // السحب يبدأ من البطاقة كلها بالضغط المطوّل
                     buildDefaultDragHandles: false,
-
                     itemBuilder: (context, index) {
                       final file = files[index];
                       final selected = selectedIndex == index;
@@ -736,9 +910,20 @@ class _ProjectScreenState extends State<ProjectScreen> {
                                 color: selected
                                     ? Colors.orange
                                     : Colors.white24,
-                                width: selected ? 2 : 1,
+                                width: selected ? 3 : 1,
                               ),
                               borderRadius: BorderRadius.circular(8),
+                              boxShadow: selected
+                                  ? [
+                                      BoxShadow(
+                                        color: Colors.orange.withValues(
+                                          alpha: 0.28,
+                                        ),
+                                        blurRadius: 10,
+                                        spreadRadius: 1,
+                                      ),
+                                    ]
+                                  : const [],
                             ),
                             clipBehavior: Clip.antiAlias,
                             child: Column(
@@ -768,7 +953,36 @@ class _ProjectScreenState extends State<ProjectScreen> {
                                         },
                                       ),
 
+                                      // علامة توضح الفيديو المحدد
+
+                                      if (selected)
+                                        Positioned(
+                                          top: 6,
+                                          left: 6,
+                                          child: Container(
+                                            padding:
+                                                const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 4,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Colors.orange,
+                                              borderRadius:
+                                                  BorderRadius.circular(5),
+                                            ),
+                                            child: const Text(
+                                              'محدد',
+                                              style: TextStyle(
+                                                color: Colors.black,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+
                                       // زر الحذف
+
                                       Positioned(
                                         top: 2,
                                         right: 2,
@@ -781,7 +995,8 @@ class _ProjectScreenState extends State<ProjectScreen> {
                                             tooltip: 'حذف الفيديو',
                                             iconSize: 18,
                                             padding: EdgeInsets.zero,
-                                            constraints: const BoxConstraints(
+                                            constraints:
+                                                const BoxConstraints(
                                               minWidth: 30,
                                               minHeight: 30,
                                             ),
@@ -801,12 +1016,13 @@ class _ProjectScreenState extends State<ProjectScreen> {
                                   ),
                                 ),
 
-                                // اسم الفيديو وعلامة السحب
+                                // اسم الفيديو ومدته وعلامة السحب
+
                                 Container(
                                   width: double.infinity,
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 5,
-                                    vertical: 2,
+                                    vertical: 3,
                                   ),
                                   color: selected
                                       ? const Color(0xFF49300F)
@@ -821,6 +1037,21 @@ class _ProjectScreenState extends State<ProjectScreen> {
                                             fontSize: 11,
                                           ),
                                         ),
+                                      ),
+                                      FutureBuilder<Duration?>(
+                                        future: getVideoDuration(file.path),
+                                        builder: (context, snapshot) {
+                                          return Text(
+                                            snapshot.data != null
+                                                ? formatTime(snapshot.data!)
+                                                : '--:--',
+                                            style: const TextStyle(
+                                              color: Colors.orange,
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          );
+                                        },
                                       ),
                                       const Padding(
                                         padding: EdgeInsets.symmetric(
@@ -845,6 +1076,230 @@ class _ProjectScreenState extends State<ProjectScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+
+// ================= VIDEO TRIM SCREEN =================
+
+class VideoTrimScreen extends StatefulWidget {
+  final File file;
+
+  const VideoTrimScreen({
+    super.key,
+    required this.file,
+  });
+
+  @override
+  State<VideoTrimScreen> createState() => _VideoTrimScreenState();
+}
+
+class _VideoTrimScreenState extends State<VideoTrimScreen> {
+  final Trimmer _trimmer = Trimmer();
+
+  double startValue = 0.0;
+  double endValue = 0.0;
+
+  bool isLoading = true;
+  bool isPlaying = false;
+  bool isSaving = false;
+
+  String? loadError;
+
+  @override
+  void initState() {
+    super.initState();
+    loadVideo();
+  }
+
+  Future<void> loadVideo() async {
+    try {
+      await _trimmer.loadVideo(videoPath: widget.file.path);
+
+      if (!mounted) return;
+
+      setState(() {
+        isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        isLoading = false;
+        loadError = e.toString();
+      });
+    }
+  }
+
+  Future<void> toggleTrimPlayback() async {
+    if (isLoading || isSaving || loadError != null) return;
+
+    try {
+      final playbackState = await _trimmer.videoPlaybackControl(
+        startValue: startValue,
+        endValue: endValue,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        isPlaying = playbackState;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذر تشغيل المعاينة: $e')),
+      );
+    }
+  }
+
+  Future<void> saveTrimmedVideo() async {
+    if (isSaving || isLoading || loadError != null) return;
+
+    setState(() {
+      isSaving = true;
+    });
+
+    try {
+      await _trimmer.saveTrimmedVideo(
+        startValue: startValue,
+        endValue: endValue,
+        onSave: (outputPath) {
+          if (!mounted) return;
+
+          if (outputPath == null || outputPath.isEmpty) {
+            setState(() {
+              isSaving = false;
+            });
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('لم يتم إنشاء الفيديو المقصوص'),
+              ),
+            );
+            return;
+          }
+
+          Navigator.pop(context, outputPath);
+        },
+      );
+
+      if (mounted && isSaving) {
+        setState(() {
+          isSaving = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        isSaving = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('حدث خطأ أثناء القص: $e')),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _trimmer.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF101116),
+      appBar: AppBar(
+        title: const Text('قص الفيديو'),
+        backgroundColor: const Color(0xFF191A22),
+        actions: [
+          TextButton.icon(
+            onPressed: isSaving || isLoading || loadError != null
+                ? null
+                : saveTrimmedVideo,
+            icon: const Icon(Icons.save, color: Colors.orange),
+            label: const Text(
+              'حفظ الجزء',
+              style: TextStyle(color: Colors.orange),
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: isLoading
+          ? const Center(
+              child: CircularProgressIndicator(color: Colors.orange),
+            )
+          : loadError != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Text(
+                      'تعذر تحميل الفيديو:\n$loadError',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                )
+              : Column(
+                  children: [
+                    if (isSaving)
+                      const LinearProgressIndicator(
+                        color: Colors.orange,
+                        backgroundColor: Colors.white12,
+                      ),
+                    Expanded(
+                      child: Container(
+                        width: double.infinity,
+                        color: Colors.black,
+                        child: VideoViewer(trimmer: _trimmer),
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 10),
+                      child: Text(
+                        'اسحب طرفي التحديد لاختيار بداية ونهاية المقطع',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: TrimViewer(
+                        trimmer: _trimmer,
+                        viewerHeight: 65,
+                        viewerWidth: MediaQuery.of(context).size.width - 24,
+                        onChangeStart: (value) {
+                          startValue = value;
+                        },
+                        onChangeEnd: (value) {
+                          endValue = value;
+                        },
+                        onChangePlaybackState: (value) {
+                          if (!mounted) return;
+                          setState(() {
+                            isPlaying = value;
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    IconButton(
+                      onPressed: isSaving ? null : toggleTrimPlayback,
+                      iconSize: 48,
+                      color: Colors.orange,
+                      icon: Icon(
+                        isPlaying
+                            ? Icons.pause_circle
+                            : Icons.play_circle,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                ),
     );
   }
 }

@@ -16,6 +16,9 @@ dependencies:
   video_player: ^2.14.1
   video_thumbnail:
     path: packages/video_thumbnail
+  video_trimmer: ^6.0.0
+  just_audio: ^0.10.6
+  file_picker: ^13.3.2
 
 dev_dependencies:
   flutter_test:

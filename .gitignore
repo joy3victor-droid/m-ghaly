@@ -46,3 +46,11 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+*.apk
+*.bak
+*.backup*
+lib/main.dart.*
+lib/main_*.dart
+*_log*.txt
+/0
+/=

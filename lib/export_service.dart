@@ -150,7 +150,7 @@ class ExportService {
 
     final totalMs = durations.fold<int>(0, (sum, d) => sum + d.inMilliseconds);
 
-    await FFmpegKitConfig.enableStatisticsCallback((stats) {
+    FFmpegKitConfig.enableStatisticsCallback((stats) {
       if (totalMs <= 0) return;
       onProgress((stats.getTime() / totalMs).clamp(0.0, 1.0).toDouble());
     });

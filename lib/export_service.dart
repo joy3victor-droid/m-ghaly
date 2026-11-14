@@ -13,6 +13,18 @@ class ExportAudio {
   final double volume;
 }
 
+class ExportText {
+  const ExportText({
+    required this.pngPath,
+    required this.startMs,
+    required this.endMs,
+  });
+
+  final String pngPath;
+  final int startMs;
+  final int endMs;
+}
+
 class ExportException implements Exception {
   ExportException(this.message);
   final String message;
@@ -29,6 +41,7 @@ class ExportService {
     required int width,
     required int height,
     required void Function(double progress) onProgress,
+    List<ExportText> texts = const [],
     int fps = 30,
   }) async {
     if (videos.isEmpty) throw ExportException('لا توجد فيديوهات للتصدير');
@@ -75,6 +88,12 @@ class ExportService {
       extraInputIndex.add(inputCount++);
     }
 
+    final textInputIndex = <int>[];
+    for (final t in texts) {
+      args.addAll(['-i', t.pngPath]);
+      textInputIndex.add(inputCount++);
+    }
+
     final filters = <String>[];
     final concatInputs = StringBuffer();
 
@@ -104,6 +123,17 @@ class ExportService {
       '${concatInputs}concat=n=${videos.length}:v=1:a=1[vout][amain]',
     );
 
+    var videoOut = '[vout]';
+    for (var i = 0; i < texts.length; i++) {
+      final s = (texts[i].startMs / 1000).toStringAsFixed(3);
+      final e = (texts[i].endMs / 1000).toStringAsFixed(3);
+      filters.add(
+        '$videoOut[${textInputIndex[i]}:v]overlay=0:0:format=auto:'
+        "enable='between(t,$s,$e)'[vt$i]",
+      );
+      videoOut = '[vt$i]';
+    }
+
     String audioOut = '[amain]';
 
     if (audios.isNotEmpty) {
@@ -130,7 +160,7 @@ class ExportService {
       '-filter_complex',
       filters.join(';'),
       '-map',
-      '[vout]',
+      videoOut,
       '-map',
       audioOut,
       '-c:v',

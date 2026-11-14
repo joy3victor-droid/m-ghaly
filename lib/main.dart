@@ -14,6 +14,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:just_waveform/just_waveform.dart';
 import 'package:gal/gal.dart';
 import 'export_service.dart';
+import 'text_overlay.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -689,6 +690,302 @@ class _ProjectScreenState extends State<ProjectScreen> {
     await syncAudioWithVideo(localPosition: local);
   }
 
+  // ================= TEXT OVERLAYS =================
+
+  final List<TextClip> textClips = [];
+
+  Duration currentProjectPosition() {
+    final c = controller;
+    return currentVideoProjectOffset +
+        (c != null && videoReady ? c.value.position : Duration.zero);
+  }
+
+  Widget previewText(TextClip t, double w, double h) {
+    final fontSize = h * t.sizeFraction;
+    final text = Padding(
+      padding: EdgeInsets.symmetric(horizontal: w * 0.05),
+      child: Text(
+        t.text,
+        textAlign: TextAlign.center,
+        textDirection: t.textDirection,
+        style: TextStyle(
+          color: Color(t.colorValue),
+          fontSize: fontSize,
+          fontWeight: FontWeight.bold,
+          shadows: textShadows(fontSize),
+        ),
+      ),
+    );
+
+    if (t.position == 0) {
+      return Positioned(
+        top: h * 0.08,
+        left: 0,
+        right: 0,
+        child: Center(child: text),
+      );
+    }
+    if (t.position == 1) {
+      return Positioned.fill(child: Center(child: text));
+    }
+    return Positioned(
+      bottom: h * 0.12,
+      left: 0,
+      right: 0,
+      child: Center(child: text),
+    );
+  }
+
+  Widget buildTextOverlay(VideoPlayerController c) {
+    return IgnorePointer(
+      child: LayoutBuilder(
+        builder: (context, box) {
+          return AnimatedBuilder(
+            animation: c,
+            builder: (context, _) {
+              final position = currentVideoProjectOffset + c.value.position;
+              final active = textClips
+                  .where((t) => position >= t.start && position < t.end)
+                  .toList();
+              if (active.isEmpty) return const SizedBox.shrink();
+              return Stack(
+                children: [
+                  for (final t in active)
+                    previewText(t, box.maxWidth, box.maxHeight),
+                ],
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> addTextClipDialog() async {
+    final textController = TextEditingController();
+    var seconds = 3;
+    var position = 2;
+    var size = 0.08;
+    var colorValue = 0xFFFFFFFF;
+
+    const palette = <int>[
+      0xFFFFFFFF,
+      0xFFFFEB3B,
+      0xFFFFAB40,
+      0xFFFF5252,
+      0xFF69F0AE,
+      0xFF40C4FF,
+    ];
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setLocal) {
+          Widget chip(String label, bool selected, VoidCallback onTap) {
+            return ChoiceChip(
+              label: Text(label),
+              selected: selected,
+              onSelected: (_) => setLocal(onTap),
+            );
+          }
+
+          return AlertDialog(
+            backgroundColor: const Color(0xFF252630),
+            title: const Text('إضافة نص'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: textController,
+                    autofocus: true,
+                    minLines: 1,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      hintText: 'اكتب النص هنا',
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text('المدة (ثانية)'),
+                  Wrap(
+                    spacing: 6,
+                    children: [
+                      for (final s in [2, 3, 5, 10])
+                        chip('$s', seconds == s, () => seconds = s),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  const Text('المكان'),
+                  Wrap(
+                    spacing: 6,
+                    children: [
+                      chip('أعلى', position == 0, () => position = 0),
+                      chip('وسط', position == 1, () => position = 1),
+                      chip('أسفل', position == 2, () => position = 2),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  const Text('الحجم'),
+                  Wrap(
+                    spacing: 6,
+                    children: [
+                      chip('صغير', size == 0.05, () => size = 0.05),
+                      chip('متوسط', size == 0.08, () => size = 0.08),
+                      chip('كبير', size == 0.12, () => size = 0.12),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  const Text('اللون'),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final c in palette)
+                        GestureDetector(
+                          onTap: () => setLocal(() => colorValue = c),
+                          child: Container(
+                            width: 30,
+                            height: 30,
+                            decoration: BoxDecoration(
+                              color: Color(c),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: colorValue == c
+                                    ? Colors.white
+                                    : Colors.white24,
+                                width: colorValue == c ? 3 : 1,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('إلغاء'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text(
+                  'إضافة',
+                  style: TextStyle(color: Colors.orangeAccent),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    final text = textController.text.trim();
+    textController.dispose();
+
+    if (confirmed != true || text.isEmpty || !mounted) return;
+
+    final start = currentProjectPosition();
+
+    setState(() {
+      textClips.add(
+        TextClip(
+          text: text,
+          start: start,
+          end: start + Duration(seconds: seconds),
+          position: position,
+          sizeFraction: size,
+          colorValue: colorValue,
+        ),
+      );
+    });
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('تمت إضافة النص')));
+  }
+
+  Future<void> openTextManager() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF252630),
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheet) {
+          final sorted = List<TextClip>.of(textClips)
+            ..sort((a, b) => a.start.compareTo(b.start));
+
+          return SafeArea(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.8,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    leading: const Icon(
+                      Icons.add_circle_outline,
+                      color: Colors.orangeAccent,
+                    ),
+                    title: const Text('إضافة نص عند المؤشر'),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      unawaited(addTextClipDialog());
+                    },
+                  ),
+                  const Divider(height: 1),
+                  if (sorted.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(20),
+                      child: Text(
+                        'لا توجد نصوص بعد',
+                        style: TextStyle(color: Colors.white54),
+                      ),
+                    ),
+                  Flexible(
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: [
+                        for (final t in sorted)
+                          ListTile(
+                            title: Text(
+                              t.text,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              '${formatTime(t.start)} - ${formatTime(t.end)}',
+                            ),
+                            onTap: () {
+                              Navigator.pop(sheetContext);
+                              unawaited(seekToProjectTime(t.start));
+                            },
+                            trailing: IconButton(
+                              icon: const Icon(
+                                Icons.delete_outline,
+                                color: Colors.redAccent,
+                              ),
+                              onPressed: () {
+                                setState(() => textClips.remove(t));
+                                setSheet(() {});
+                              },
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   // ================= UNDO / REDO =================
 
   final List<List<String>> undoStack = [];
@@ -913,6 +1210,19 @@ class _ProjectScreenState extends State<ProjectScreen> {
         durations.add(await getVideoDuration(file.path) ?? Duration.zero);
       }
 
+      final outW = videoSize.width.round() - videoSize.width.round() % 2;
+      final outH = videoSize.height.round() - videoSize.height.round() % 2;
+      final texts = <ExportText>[];
+      for (final t in textClips) {
+        texts.add(
+          ExportText(
+            pngPath: await renderTextOverlay(t, outW, outH),
+            startMs: t.start.inMilliseconds,
+            endMs: t.end.inMilliseconds,
+          ),
+        );
+      }
+
       outputPath = await ExportService.export(
         videos: files.map((f) => f.path).toList(),
         durations: durations,
@@ -922,6 +1232,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
             .toList(),
         width: videoSize.width.round(),
         height: videoSize.height.round(),
+        texts: texts,
         onProgress: (value) => progress.value = value,
       );
 
@@ -1387,6 +1698,13 @@ class _ProjectScreenState extends State<ProjectScreen> {
         ),
         actions: [
           IconButton(
+            tooltip: 'النصوص',
+            onPressed: files.isEmpty ? null : () => unawaited(openTextManager()),
+            icon: const Icon(Icons.title_rounded),
+            color: Colors.orangeAccent,
+            disabledColor: Colors.white24,
+          ),
+          IconButton(
             tooltip: 'تراجع',
             onPressed: undoStack.isEmpty || isSplitting || isExporting
                 ? null
@@ -1546,7 +1864,17 @@ class _ProjectScreenState extends State<ProjectScreen> {
                                   child: AspectRatio(
                                     aspectRatio:
                                         currentController.value.aspectRatio,
-                                    child: VideoPlayer(currentController),
+                                    child: Stack(
+                                      fit: StackFit.expand,
+                                      children: [
+                                        VideoPlayer(currentController),
+                                        Positioned.fill(
+                                          child: buildTextOverlay(
+                                            currentController,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 )
                               : Container(

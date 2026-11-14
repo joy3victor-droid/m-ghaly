@@ -444,6 +444,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
 
     final newIndex = selectedIndex + 1;
 
+    recordHistory();
     setState(() {
       files.insert(newIndex, XFile(outputPath));
     });
@@ -483,6 +484,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
 
     final wasEmpty = files.isEmpty;
 
+    recordHistory();
     setState(() {
       files.addAll(newVideos);
     });
@@ -687,6 +689,64 @@ class _ProjectScreenState extends State<ProjectScreen> {
     await syncAudioWithVideo(localPosition: local);
   }
 
+  // ================= UNDO / REDO =================
+
+  final List<List<String>> undoStack = [];
+  final List<List<String>> redoStack = [];
+
+  List<String> snapshotFiles() => files.map((f) => f.path).toList();
+
+  void recordHistory() {
+    undoStack.add(snapshotFiles());
+    if (undoStack.length > 30) undoStack.removeAt(0);
+    redoStack.clear();
+  }
+
+  Future<void> restoreSnapshot(List<String> paths) async {
+    final currentPath = selectedIndex >= 0 && selectedIndex < files.length
+        ? files[selectedIndex].path
+        : null;
+
+    setState(() {
+      files = paths.map((p) => XFile(p)).toList();
+    });
+
+    if (files.isEmpty) {
+      await clearPreview();
+      return;
+    }
+
+    var target = currentPath == null
+        ? -1
+        : files.indexWhere((f) => f.path == currentPath);
+    if (target == -1) target = math.min(selectedIndex, files.length - 1);
+    if (target < 0) target = 0;
+
+    await loadVideo(target);
+  }
+
+  Future<void> undo() async {
+    if (undoStack.isEmpty || isSplitting || isExporting) return;
+
+    await controller?.pause();
+    await pauseAudioTracks();
+
+    redoStack.add(snapshotFiles());
+    final previous = undoStack.removeLast();
+    await restoreSnapshot(previous);
+  }
+
+  Future<void> redo() async {
+    if (redoStack.isEmpty || isSplitting || isExporting) return;
+
+    await controller?.pause();
+    await pauseAudioTracks();
+
+    undoStack.add(snapshotFiles());
+    final next = redoStack.removeLast();
+    await restoreSnapshot(next);
+  }
+
   // ================= SPLIT =================
 
   bool isSplitting = false;
@@ -772,6 +832,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
       return;
     }
 
+    recordHistory();
     setState(() {
       files[index] = XFile(newParts[0]);
       files.insert(index + 1, XFile(newParts[1]));
@@ -1116,6 +1177,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
     final wasSelected = index == selectedIndex;
     final deletedPath = files[index].path;
 
+    recordHistory();
     setState(() {
       files.removeAt(index);
       thumbnails.remove(deletedPath);
@@ -1183,6 +1245,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
         ? files[selectedIndex].path
         : null;
 
+    recordHistory();
     setState(() {
       final movedFile = files.removeAt(oldIndex);
 
@@ -1323,6 +1386,24 @@ class _ProjectScreenState extends State<ProjectScreen> {
           ),
         ),
         actions: [
+          IconButton(
+            tooltip: 'تراجع',
+            onPressed: undoStack.isEmpty || isSplitting || isExporting
+                ? null
+                : () => unawaited(undo()),
+            icon: const Icon(Icons.undo_rounded),
+            color: Colors.orangeAccent,
+            disabledColor: Colors.white24,
+          ),
+          IconButton(
+            tooltip: 'إعادة',
+            onPressed: redoStack.isEmpty || isSplitting || isExporting
+                ? null
+                : () => unawaited(redo()),
+            icon: const Icon(Icons.redo_rounded),
+            color: Colors.orangeAccent,
+            disabledColor: Colors.white24,
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
             child: TextButton.icon(

@@ -603,6 +603,90 @@ class _ProjectScreenState extends State<ProjectScreen> {
     }
   }
 
+  // ================= FIXED PLAYHEAD / SCROLLING TIMELINE =================
+
+  final ScrollController timelineScroll = ScrollController();
+  bool userScrubbing = false;
+  double currentPixelsPerSecond = 30.0;
+
+  void syncTimelineToPlayback() {
+    final active = controller;
+    if (!mounted || userScrubbing || active == null || !videoReady) return;
+    if (!timelineScroll.hasClients) return;
+
+    final position = currentVideoProjectOffset + active.value.position;
+    final target = (position.inMilliseconds / 1000 * currentPixelsPerSecond)
+        .clamp(0.0, timelineScroll.position.maxScrollExtent)
+        .toDouble();
+
+    if ((timelineScroll.offset - target).abs() > 0.5) {
+      timelineScroll.jumpTo(target);
+    }
+  }
+
+  void scrubToPixels(double pixels, double pixelsPerSecond) {
+    if (pixelsPerSecond <= 0) return;
+    final ms = (pixels / pixelsPerSecond * 1000).round();
+    unawaited(seekToProjectTime(Duration(milliseconds: math.max(0, ms))));
+  }
+
+  Duration? pendingSeek;
+  bool isSeeking = false;
+
+  Future<void> seekToProjectTime(Duration target) async {
+    pendingSeek = target;
+    if (isSeeking) return;
+    isSeeking = true;
+
+    try {
+      while (pendingSeek != null && mounted) {
+        final next = pendingSeek!;
+        pendingSeek = null;
+        await seekProjectOnce(next);
+      }
+    } finally {
+      isSeeking = false;
+    }
+  }
+
+  Future<void> seekProjectOnce(Duration target) async {
+    if (files.isEmpty) return;
+
+    var elapsed = Duration.zero;
+    var index = files.length - 1;
+    var local = Duration.zero;
+
+    for (var i = 0; i < files.length; i++) {
+      final clipDuration =
+          await getVideoDuration(files[i].path) ?? Duration.zero;
+      if (target < elapsed + clipDuration || i == files.length - 1) {
+        index = i;
+        local = target - elapsed;
+        final limit = clipDuration - const Duration(milliseconds: 100);
+        if (local > limit) local = limit;
+        if (local < Duration.zero) local = Duration.zero;
+        break;
+      }
+      elapsed += clipDuration;
+    }
+
+    if (!mounted) return;
+
+    if (index != selectedIndex || controller == null || !videoReady) {
+      await loadVideo(index);
+    }
+
+    final active = controller;
+    if (!mounted || active == null || !active.value.isInitialized) return;
+
+    if (active.value.isPlaying) await active.pause();
+    await pauseAudioTracks();
+
+    lastCompletedController = null;
+    await active.seekTo(local);
+    await syncAudioWithVideo(localPosition: local);
+  }
+
   // ================= SPLIT =================
 
   bool isSplitting = false;
@@ -941,6 +1025,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
   // ================= AUTO NEXT VIDEO =================
 
   void handleVideoProgress() {
+    syncTimelineToPlayback();
     final activeController = controller;
 
     if (!mounted || !videoReady || activeController == null) return;
@@ -1134,6 +1219,8 @@ class _ProjectScreenState extends State<ProjectScreen> {
     }
 
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+
+    timelineScroll.dispose();
 
     super.dispose();
   }
@@ -1837,7 +1924,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
                                 (totalDuration.inMilliseconds /
                                         1000 *
                                         pixelsPerSecond)
-                                    .clamp(1000.0, 30000.0)
+                                    .clamp(60.0, 30000.0)
                                     .toDouble();
 
                             final tickStep = totalDuration.inMinutes >= 2
@@ -2866,60 +2953,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
                               ],
                             );
 
-                            final current = controller;
-                            final timelineCanvas = current != null && videoReady
-                                ? AnimatedBuilder(
-                                    animation: current,
-                                    child: rightTrackContent,
-                                    builder: (context, child) {
-                                      final projectPosition =
-                                          currentVideoProjectOffset +
-                                          current.value.position;
-                                      final playheadLeft =
-                                          projectPosition.inMilliseconds /
-                                          1000 *
-                                          pixelsPerSecond;
-
-                                      return Stack(
-                                        children: [
-                                          child!,
-                                          Positioned(
-                                            left: playheadLeft - 7,
-                                            top: 0,
-                                            bottom: 0,
-                                            child: IgnorePointer(
-                                              child: SizedBox(
-                                                width: 14,
-                                                child: CustomPaint(
-                                                  painter:
-                                                      _PlayheadHeadPainter(),
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      );
-                                    },
-                                  )
-                                : Stack(
-                                    children: [
-                                      rightTrackContent,
-                                      if (files.isNotEmpty)
-                                        const Positioned(
-                                          left: -7,
-                                          top: 0,
-                                          bottom: 0,
-                                          child: IgnorePointer(
-                                            child: SizedBox(
-                                              width: 14,
-                                              child: CustomPaint(
-                                                painter: _PlayheadHeadPainter(),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  );
+                            final timelineCanvas = rightTrackContent;
 
                             return Listener(
                               onPointerDown: (event) {
@@ -2986,17 +3020,82 @@ class _ProjectScreenState extends State<ProjectScreen> {
                                         child: leftTrackHeaders,
                                       ),
                                       Expanded(
-                                        child: SingleChildScrollView(
-                                          scrollDirection: Axis.horizontal,
-                                          child: SizedBox(
-                                            width: timelineWidth,
-                                            height: tracksHeight,
-                                            child: SizedBox(
-                                              width: timelineWidth,
-                                              height: tracksHeight,
-                                              child: timelineCanvas,
-                                            ),
-                                          ),
+                                        child: LayoutBuilder(
+                                          builder: (context, box) {
+                                            final half = box.maxWidth / 2;
+
+                                            if ((currentPixelsPerSecond -
+                                                        pixelsPerSecond)
+                                                    .abs() >
+                                                0.001) {
+                                              currentPixelsPerSecond =
+                                                  pixelsPerSecond;
+                                              WidgetsBinding.instance
+                                                  .addPostFrameCallback(
+                                                    (_) =>
+                                                        syncTimelineToPlayback(),
+                                                  );
+                                            }
+
+                                            return Stack(
+                                              children: [
+                                                NotificationListener<
+                                                  ScrollNotification
+                                                >(
+                                                  onNotification: (n) {
+                                                    if (n.metrics.axis !=
+                                                        Axis.horizontal) {
+                                                      return false;
+                                                    }
+                                                    if (n
+                                                            is ScrollStartNotification &&
+                                                        n.dragDetails != null) {
+                                                      userScrubbing = true;
+                                                    } else if (n
+                                                            is ScrollUpdateNotification &&
+                                                        userScrubbing) {
+                                                      scrubToPixels(
+                                                        n.metrics.pixels,
+                                                        pixelsPerSecond,
+                                                      );
+                                                    } else if (n
+                                                        is ScrollEndNotification) {
+                                                      userScrubbing = false;
+                                                    }
+                                                    return false;
+                                                  },
+                                                  child: SingleChildScrollView(
+                                                    controller: timelineScroll,
+                                                    scrollDirection:
+                                                        Axis.horizontal,
+                                                    padding:
+                                                        EdgeInsets.symmetric(
+                                                          horizontal: half,
+                                                        ),
+                                                    child: SizedBox(
+                                                      width: timelineWidth,
+                                                      height: tracksHeight,
+                                                      child: timelineCanvas,
+                                                    ),
+                                                  ),
+                                                ),
+                                                Positioned(
+                                                  left: half - 7,
+                                                  top: 0,
+                                                  bottom: 0,
+                                                  child: const IgnorePointer(
+                                                    child: SizedBox(
+                                                      width: 14,
+                                                      child: CustomPaint(
+                                                        painter:
+                                                            _PlayheadHeadPainter(),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            );
+                                          },
                                         ),
                                       ),
                                     ],

@@ -174,6 +174,34 @@ class ExportService {
     throw ExportException('فشل التصدير:\n$tail');
   }
 
+  /// يقسم فيديو لجزئين عند الموضع المحدد، ويرجّع مساري الجزئين.
+  static Future<List<String>> splitVideo(String path, Duration position) async {
+    final dir = await getTemporaryDirectory();
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final first = '${dir.path}/split_${stamp}_a.mp4';
+    final second = '${dir.path}/split_${stamp}_b.mp4';
+    final seconds = (position.inMilliseconds / 1000).toStringAsFixed(3);
+
+    Future<void> run(List<String> args) async {
+      final session = await FFmpegKit.executeWithArguments(args);
+      final code = await session.getReturnCode();
+      if (ReturnCode.isSuccess(code)) return;
+      final logs = await session.getAllLogsAsString() ?? '';
+      final tail = logs.length > 500 ? logs.substring(logs.length - 500) : logs;
+      throw ExportException('فشل التقسيم:\n$tail');
+    }
+
+    const encode = [
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
+      '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart',
+    ];
+
+    await run(['-y', '-i', path, '-t', seconds, ...encode, first]);
+    await run(['-y', '-ss', seconds, '-i', path, ...encode, second]);
+
+    return [first, second];
+  }
+
   static Future<void> cancel() => FFmpegKit.cancel();
 
   static Future<bool> _hasAudioStream(String path) async {

@@ -603,6 +603,104 @@ class _ProjectScreenState extends State<ProjectScreen> {
     }
   }
 
+  // ================= SPLIT =================
+
+  bool isSplitting = false;
+
+  Future<void> splitAtPlayhead() async {
+    final activeController = controller;
+    if (!videoReady ||
+        activeController == null ||
+        files.isEmpty ||
+        isSplitting ||
+        isExporting) {
+      return;
+    }
+
+    final position = activeController.value.position;
+    final duration = activeController.value.duration;
+    const margin = Duration(milliseconds: 500);
+
+    if (position < margin || duration - position < margin) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('حرّك المؤشر لنقطة داخل الكليب قبل التقسيم'),
+        ),
+      );
+      return;
+    }
+
+    await activeController.pause();
+    await pauseAudioTracks();
+    if (!mounted) return;
+
+    final index = selectedIndex;
+    final sourcePath = files[index].path;
+
+    setState(() => isSplitting = true);
+
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const PopScope(
+          canPop: false,
+          child: AlertDialog(
+            backgroundColor: Color(0xFF252630),
+            content: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 26,
+                  height: 26,
+                  child: CircularProgressIndicator(
+                    color: Colors.orangeAccent,
+                    strokeWidth: 3,
+                  ),
+                ),
+                SizedBox(width: 16),
+                Text('جاري التقسيم...'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    List<String>? parts;
+    String? errorMessage;
+
+    try {
+      parts = await ExportService.splitVideo(sourcePath, position);
+    } catch (e) {
+      errorMessage = e.toString();
+    }
+
+    if (mounted) Navigator.of(context, rootNavigator: true).pop();
+    if (!mounted) return;
+    setState(() => isSplitting = false);
+
+    final newParts = parts;
+    if (newParts == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(errorMessage ?? 'فشل التقسيم')),
+      );
+      return;
+    }
+
+    setState(() {
+      files[index] = XFile(newParts[0]);
+      files.insert(index + 1, XFile(newParts[1]));
+    });
+
+    await loadVideo(index);
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('تم تقسيم الكليب إلى جزئين')),
+    );
+  }
+
   // ================= EXPORT =================
 
   bool isExporting = false;
@@ -1138,6 +1236,28 @@ class _ProjectScreenState extends State<ProjectScreen> {
           ),
         ),
         actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+            child: TextButton.icon(
+              onPressed: files.isEmpty || isSplitting || isExporting
+                  ? null
+                  : () => unawaited(splitAtPlayhead()),
+              icon: const Icon(Icons.vertical_split_rounded, size: 19),
+              label: const Text('تقسيم'),
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFFB9D7FF),
+                disabledForegroundColor: Colors.white24,
+                backgroundColor: const Color(0xFF1D3350),
+                padding: const EdgeInsets.symmetric(horizontal: 13),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  side: BorderSide(
+                    color: Colors.lightBlueAccent.withValues(alpha: 0.35),
+                  ),
+                ),
+              ),
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
             child: TextButton.icon(

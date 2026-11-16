@@ -13,7 +13,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:just_waveform/just_waveform.dart';
 import 'package:gal/gal.dart';
+
 import 'export_service.dart';
+import 'project_storage.dart';
 import 'text_overlay.dart';
 
 void main() async {
@@ -31,7 +33,7 @@ class MGhalyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'M-GHALY',
+      title: 'GHALY STUDIO',
       theme: ThemeData.dark(),
       builder: (context, child) =>
           Directionality(textDirection: TextDirection.ltr, child: child!),
@@ -53,8 +55,25 @@ bool isVideo(XFile file) {
 
 // ================= HOME SCREEN =================
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  late Future<List<SavedProject>> _projectsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshProjects();
+  }
+
+  void _refreshProjects() {
+    _projectsFuture = ProjectStorage.listProjects();
+  }
 
   Future<void> openProject(BuildContext context) async {
     final picker = ImagePicker();
@@ -76,16 +95,85 @@ class HomeScreen extends StatelessWidget {
       return;
     }
 
-    Navigator.push(
+    await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => ProjectScreen(files: videos)),
     );
+    if (mounted) {
+      setState(_refreshProjects);
+    }
+  }
+
+  Future<void> openSavedProject(SavedProject project) async {
+    if (project.videoPaths.isEmpty ||
+        project.videoPaths.any((path) => !File(path).existsSync())) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تعذر فتح المشروع: بعض ملفات الفيديو غير موجودة'),
+        ),
+      );
+      return;
+    }
+
+    final projectFiles = project.videoPaths.map((path) => XFile(path)).toList();
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) =>
+            ProjectScreen(files: projectFiles, savedProject: project),
+      ),
+    );
+
+    if (!mounted) return;
+    setState(_refreshProjects);
+  }
+
+  Future<void> deleteSavedProject(SavedProject project) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF101014),
+        title: const Text(
+          'Delete Project?',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          'هل أنت متأكد من حذف "${project.name}" وجميع ملفاته؟ لا يمكن التراجع عن هذا الإجراء.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('حذف', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await ProjectStorage.delete(project.id);
+      if (!mounted) return;
+      setState(_refreshProjects);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('تم حذف المشروع')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('تعذر حذف المشروع: $e')));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF101116),
+      backgroundColor: const Color(0xFF020203),
       appBar: AppBar(
         toolbarHeight: 58,
         centerTitle: true,
@@ -116,7 +204,7 @@ class HomeScreen extends StatelessWidget {
             ),
             const SizedBox(width: 10),
             const Text(
-              'M-GHALY',
+              'GHALY STUDIO',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 19,
@@ -131,7 +219,7 @@ class HomeScreen extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.centerLeft,
               end: Alignment.centerRight,
-              colors: [Color(0xFF252D3B), Color(0xFF191D27), Color(0xFF11141C)],
+              colors: [Color(0xFF101014), Color(0xFF101014), Color(0xFF08090C)],
             ),
           ),
         ),
@@ -142,7 +230,7 @@ class HomeScreen extends StatelessWidget {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0xFF202635), Color(0xFF101116), Color(0xFF090B10)],
+            colors: [Color(0xFF08090C), Color(0xFF020203), Color(0xFF090B10)],
           ),
         ),
         child: Center(
@@ -177,7 +265,7 @@ class HomeScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 28),
                 const Text(
-                  'M-GHALY',
+                  'GHALY STUDIO',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 31,
@@ -201,7 +289,7 @@ class HomeScreen extends StatelessWidget {
                   constraints: const BoxConstraints(maxWidth: 390),
                   padding: const EdgeInsets.all(22),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1B202B),
+                    color: const Color(0xFF101014),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
                       color: Colors.white.withValues(alpha: 0.09),
@@ -260,6 +348,155 @@ class HomeScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 24),
+                FutureBuilder<List<SavedProject>>(
+                  future: _projectsFuture,
+                  builder: (context, snapshot) {
+                    final projects = snapshot.data ?? const <SavedProject>[];
+
+                    return Container(
+                      width: double.infinity,
+                      constraints: const BoxConstraints(maxWidth: 390),
+                      padding: const EdgeInsets.all(18),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF101014),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.08),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.folder_copy_outlined,
+                                color: Colors.orangeAccent,
+                                size: 21,
+                              ),
+                              const SizedBox(width: 9),
+                              const Text(
+                                'My Projects',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const Spacer(),
+                              Text(
+                                '${projects.length}',
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting)
+                            const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(12),
+                                child: CircularProgressIndicator(
+                                  color: Colors.orangeAccent,
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          else if (snapshot.hasError)
+                            const Text(
+                              'تعذر تحميل المشاريع المحفوظة',
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 12,
+                              ),
+                            )
+                          else if (projects.isEmpty)
+                            const Text(
+                              'Your saved projects will appear here.',
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 12,
+                              ),
+                            )
+                          else
+                            ...projects.map(
+                              (project) => GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: () => unawaited(openSavedProject(project)),
+                                onLongPress: () =>
+                                    unawaited(deleteSavedProject(project)),
+                                child: Container(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 11,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF08090C),
+                                  borderRadius: BorderRadius.circular(11),
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.06),
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.movie_outlined,
+                                      color: Colors.orangeAccent,
+                                      size: 20,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            project.name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 3),
+                                          Text(
+                                            '${project.videoPaths.length} videos • ${project.updatedAt.toLocal().toString().substring(0, 16)}',
+                                            style: const TextStyle(
+                                              color: Colors.white54,
+                                              fontSize: 10,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    IconButton(
+                                      visualDensity: VisualDensity.compact,
+                                      tooltip: 'حذف المشروع',
+                                      onPressed: () =>
+                                          unawaited(deleteSavedProject(project)),
+                                      icon: const Icon(
+                                        Icons.delete_outline,
+                                        color: Colors.redAccent,
+                                        size: 20,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 24),
                 const Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -302,8 +539,9 @@ class AudioTrack {
 
 class ProjectScreen extends StatefulWidget {
   final List<XFile> files;
+  final SavedProject? savedProject;
 
-  const ProjectScreen({super.key, required this.files});
+  const ProjectScreen({super.key, required this.files, this.savedProject});
 
   @override
   State<ProjectScreen> createState() => _ProjectScreenState();
@@ -311,6 +549,9 @@ class ProjectScreen extends StatefulWidget {
 
 class _ProjectScreenState extends State<ProjectScreen> {
   late List<XFile> files;
+
+  String? savedProjectId;
+  String? savedProjectName;
 
   double timelineScale = 1.0;
   double timelineScaleStart = 1.0;
@@ -347,8 +588,242 @@ class _ProjectScreenState extends State<ProjectScreen> {
       DeviceOrientation.landscapeRight,
     ]);
 
-    if (files.isNotEmpty) {
+    if (widget.savedProject != null) {
+      unawaited(restoreSavedProject(widget.savedProject!));
+    } else if (files.isNotEmpty) {
       loadVideo(0);
+    }
+  }
+
+  Future<void> restoreSavedProject(SavedProject project) async {
+    savedProjectId = project.id;
+    savedProjectName = project.name;
+
+    timelineScale = project.timelineScale;
+    selectedIndex = files.isEmpty
+        ? 0
+        : project.selectedIndex.clamp(0, files.length - 1);
+
+    textClips
+      ..clear()
+      ..addAll(
+        project.textClips.map(
+          (item) => TextClip(
+            text: item['text'] as String? ?? '',
+            start: Duration(
+              milliseconds: (item['startMs'] as num?)?.toInt() ?? 0,
+            ),
+            end: Duration(milliseconds: (item['endMs'] as num?)?.toInt() ?? 0),
+            position: (item['position'] as num?)?.toInt() ?? 2,
+            sizeFraction: (item['sizeFraction'] as num?)?.toDouble() ?? 0.08,
+            colorValue: (item['colorValue'] as num?)?.toInt() ?? 0xFFFFFFFF,
+          ),
+        ),
+      );
+
+    if (mounted) setState(() {});
+
+    for (final item in project.audioTracks) {
+      final audioPath = item['path'] as String?;
+      if (audioPath == null || !await File(audioPath).exists()) continue;
+
+      final player = AudioPlayer();
+
+      try {
+        await player.setFilePath(audioPath);
+
+        final volume = (item['volume'] as num?)?.toDouble() ?? 1.0;
+        final enabled = item['enabled'] as bool? ?? true;
+
+        await player.setVolume(enabled ? volume : 0.0);
+
+        audioTracks.add(
+          AudioTrack(
+              path: audioPath,
+              name: item['name'] as String? ?? 'Audio',
+              player: player,
+            )
+            ..volume = volume
+            ..enabled = enabled,
+        );
+      } catch (e) {
+        debugPrint('Audio restore error: $e');
+        await player.dispose();
+      }
+    }
+
+    if (!mounted) return;
+
+    if (files.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('المشروع لا يحتوي على فيديوهات')),
+      );
+      return;
+    }
+
+    await loadVideo(selectedIndex);
+
+    if (!mounted || controller == null || !videoReady) return;
+
+    final duration = controller!.value.duration;
+    final requestedPosition = Duration(milliseconds: project.videoPositionMs);
+    final position = requestedPosition > duration
+        ? duration
+        : requestedPosition;
+
+    await controller!.seekTo(position);
+    await syncAudioWithVideo(localPosition: position);
+
+    if (!mounted) return;
+
+    setState(() {});
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('تم فتح المشروع: ${project.name}')));
+  }
+
+  Future<void> saveProject() async {
+    if (files.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('أضف فيديو أولاً لحفظ المشروع')),
+      );
+      return;
+    }
+
+    String? projectName = savedProjectName;
+
+    if (savedProjectId == null) {
+      final nameController = TextEditingController();
+      projectName = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: const Color(0xFF101014),
+          title: const Text(
+            'حفظ المشروع',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: TextField(
+            controller: nameController,
+            autofocus: true,
+            style: const TextStyle(color: Colors.white),
+            decoration: const InputDecoration(
+              hintText: 'اكتب اسم المشروع',
+              hintStyle: TextStyle(color: Colors.white38),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('إلغاء'),
+            ),
+            TextButton(
+              onPressed: () {
+                final value = nameController.text.trim();
+                if (value.isNotEmpty) {
+                  Navigator.pop(dialogContext, value);
+                }
+              },
+              child: const Text(
+                'حفظ',
+                style: TextStyle(color: Colors.orangeAccent),
+              ),
+            ),
+          ],
+        ),
+      );
+      nameController.dispose();
+
+      if (projectName == null || projectName.trim().isEmpty || !mounted) {
+        return;
+      }
+    }
+
+    final projectId =
+        savedProjectId ?? DateTime.now().microsecondsSinceEpoch.toString();
+
+    try {
+      final appDirectory = await getApplicationDocumentsDirectory();
+      final projectFolder = '${appDirectory.path}/ghaly_projects/$projectId/';
+
+      final savedVideos = <String>[];
+      for (var i = 0; i < files.length; i++) {
+        final sourcePath = files[i].path;
+        if (sourcePath.startsWith(projectFolder)) {
+          savedVideos.add(sourcePath);
+        } else {
+          savedVideos.add(
+            await ProjectStorage.copyMedia(
+              projectId: projectId,
+              sourcePath: sourcePath,
+              category: 'videos',
+              index: i,
+            ),
+          );
+        }
+      }
+
+      final savedAudios = <Map<String, dynamic>>[];
+      for (var i = 0; i < audioTracks.length; i++) {
+        final track = audioTracks[i];
+        final audioPath = track.path.startsWith(projectFolder)
+            ? track.path
+            : await ProjectStorage.copyMedia(
+                projectId: projectId,
+                sourcePath: track.path,
+                category: 'audio',
+                index: i,
+              );
+
+        savedAudios.add({
+          'path': audioPath,
+          'name': track.name,
+          'volume': track.volume,
+          'enabled': track.enabled,
+        });
+      }
+
+      final savedTexts = textClips
+          .map(
+            (clip) => {
+              'text': clip.text,
+              'startMs': clip.start.inMilliseconds,
+              'endMs': clip.end.inMilliseconds,
+              'position': clip.position,
+              'sizeFraction': clip.sizeFraction,
+              'colorValue': clip.colorValue,
+            },
+          )
+          .toList();
+
+      await ProjectStorage.save(
+        SavedProject(
+          id: projectId,
+          name: projectName!,
+          updatedAt: DateTime.now(),
+          videoPaths: savedVideos,
+          audioTracks: savedAudios,
+          textClips: savedTexts,
+          selectedIndex: selectedIndex,
+          timelineScale: timelineScale,
+          videoPositionMs: controller?.value.position.inMilliseconds ?? 0,
+        ),
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        savedProjectId = projectId;
+        savedProjectName = projectName;
+      });
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('تم حفظ المشروع: $projectName')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('تعذر حفظ المشروع: $e')));
     }
   }
 
@@ -790,7 +1265,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
           }
 
           return AlertDialog(
-            backgroundColor: const Color(0xFF252630),
+            backgroundColor: const Color(0xFF101014),
             title: const Text('إضافة نص'),
             content: SingleChildScrollView(
               child: Column(
@@ -902,15 +1377,14 @@ class _ProjectScreenState extends State<ProjectScreen> {
       );
     });
 
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('تمت إضافة النص')));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('تمت إضافة النص')));
   }
 
   Future<void> openTextManager() async {
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF252630),
+      backgroundColor: const Color(0xFF101014),
       isScrollControlled: true,
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheet) {
@@ -1087,7 +1561,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
         builder: (_) => const PopScope(
           canPop: false,
           child: AlertDialog(
-            backgroundColor: Color(0xFF252630),
+            backgroundColor: Color(0xFF101014),
             content: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1123,9 +1597,8 @@ class _ProjectScreenState extends State<ProjectScreen> {
 
     final newParts = parts;
     if (newParts == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(errorMessage ?? 'فشل التقسيم')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(errorMessage ?? 'فشل التقسيم')));
       return;
     }
 
@@ -1138,9 +1611,9 @@ class _ProjectScreenState extends State<ProjectScreen> {
     await loadVideo(index);
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('تم تقسيم الكليب إلى جزئين')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('تم تقسيم الكليب إلى جزئين')));
   }
 
   // ================= EXPORT =================
@@ -1157,6 +1630,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
 
     await activeController?.pause();
     await pauseAudioTracks();
+    if (!mounted) return;
 
     final progress = ValueNotifier<double>(0.0);
     var dialogOpen = true;
@@ -1168,11 +1642,11 @@ class _ProjectScreenState extends State<ProjectScreen> {
         builder: (dialogContext) => PopScope(
           canPop: false,
           child: AlertDialog(
-            backgroundColor: const Color(0xFF252630),
+            backgroundColor: const Color(0xFF101014),
             title: const Text('جاري التصدير...'),
             content: ValueListenableBuilder<double>(
               valueListenable: progress,
-              builder: (_, value, __) => Column(
+              builder: (_, value, _) => Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   LinearProgressIndicator(
@@ -1253,11 +1727,10 @@ class _ProjectScreenState extends State<ProjectScreen> {
 
     final message =
         errorMessage ??
-        (outputPath == null
-            ? 'تم إلغاء التصدير'
-            : 'تم حفظ الفيديو في المعرض');
+        (outputPath == null ? 'تم إلغاء التصدير' : 'تم حفظ الفيديو في المعرض');
 
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> updateCurrentProjectOffset() async {
@@ -1453,7 +1926,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          backgroundColor: const Color(0xFF252630),
+          backgroundColor: const Color(0xFF101014),
           title: const Text('حذف الفيديو'),
           content: const Text('هل تريد حذف هذا الفيديو من المشروع؟'),
           actions: [
@@ -1632,7 +2105,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
     final currentController = controller;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF101116),
+      backgroundColor: const Color(0xFF020203),
       appBar: AppBar(
         toolbarHeight: 54,
         titleSpacing: 12,
@@ -1666,7 +2139,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'M-GHALY',
+                  'GHALY STUDIO',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 16,
@@ -1692,14 +2165,16 @@ class _ProjectScreenState extends State<ProjectScreen> {
             gradient: LinearGradient(
               begin: Alignment.centerLeft,
               end: Alignment.centerRight,
-              colors: [Color(0xFF252D3B), Color(0xFF191D27), Color(0xFF11141C)],
+              colors: [Color(0xFF101014), Color(0xFF101014), Color(0xFF08090C)],
             ),
           ),
         ),
         actions: [
           IconButton(
             tooltip: 'النصوص',
-            onPressed: files.isEmpty ? null : () => unawaited(openTextManager()),
+            onPressed: files.isEmpty
+                ? null
+                : () => unawaited(openTextManager()),
             icon: const Icon(Icons.title_rounded),
             color: Colors.orangeAccent,
             disabledColor: Colors.white24,
@@ -1739,6 +2214,28 @@ class _ProjectScreenState extends State<ProjectScreen> {
                   borderRadius: BorderRadius.circular(10),
                   side: BorderSide(
                     color: Colors.lightBlueAccent.withValues(alpha: 0.35),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+            child: TextButton.icon(
+              onPressed: files.isEmpty || isExporting
+                  ? null
+                  : () => unawaited(saveProject()),
+              icon: const Icon(Icons.save_rounded, size: 19),
+              label: const Text('حفظ'),
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFFB8F2D0),
+                disabledForegroundColor: Colors.white24,
+                backgroundColor: const Color(0xFF19382D),
+                padding: const EdgeInsets.symmetric(horizontal: 13),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  side: BorderSide(
+                    color: Colors.greenAccent.withValues(alpha: 0.3),
                   ),
                 ),
               ),
@@ -2208,7 +2705,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
                             ),
                             const SizedBox(width: 7),
                             const Text(
-                              'M-GHALY',
+                              'GHALY STUDIO',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
@@ -3767,7 +4264,7 @@ class _VideoTrimScreenState extends State<VideoTrimScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF101116),
+      backgroundColor: const Color(0xFF020203),
       appBar: AppBar(
         toolbarHeight: 56,
         title: Row(
@@ -3804,7 +4301,7 @@ class _VideoTrimScreenState extends State<VideoTrimScreen> {
             gradient: LinearGradient(
               begin: Alignment.centerLeft,
               end: Alignment.centerRight,
-              colors: [Color(0xFF252D3B), Color(0xFF191D27), Color(0xFF11141C)],
+              colors: [Color(0xFF101014), Color(0xFF101014), Color(0xFF08090C)],
             ),
           ),
         ),
@@ -3845,7 +4342,7 @@ class _VideoTrimScreenState extends State<VideoTrimScreen> {
                   vertical: 26,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1B202B),
+                  color: const Color(0xFF101014),
                   borderRadius: BorderRadius.circular(18),
                   border: Border.all(
                     color: Colors.orangeAccent.withValues(alpha: 0.22),
@@ -3937,9 +4434,9 @@ class _VideoTrimScreenState extends State<VideoTrimScreen> {
                         end: Alignment.bottomRight,
                         colors: [
                           Color(0xFF626C7D),
-                          Color(0xFF252D3B),
+                          Color(0xFF101014),
                           Color(0xFFB36B28),
-                          Color(0xFF252D3B),
+                          Color(0xFF101014),
                         ],
                       ),
                       borderRadius: BorderRadius.circular(13),
@@ -3973,7 +4470,7 @@ class _VideoTrimScreenState extends State<VideoTrimScreen> {
                     vertical: 11,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1B202B),
+                    color: const Color(0xFF101014),
                     borderRadius: BorderRadius.circular(11),
                     border: Border.all(
                       color: Colors.orangeAccent.withValues(alpha: 0.22),

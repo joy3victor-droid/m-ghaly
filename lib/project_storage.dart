@@ -46,7 +46,7 @@ class SavedProject {
       updatedAt: DateTime.parse(json['updatedAt'] as String),
       videoPaths: List<String>.from(json['videoPaths'] as List),
       audioTracks: List<Map<String, dynamic>>.from(
-        (json['audioTracks'] as List).map(
+        ((json['audioTracks'] as List?) ?? const []).map(
           (item) => Map<String, dynamic>.from(item as Map),
         ),
       ),

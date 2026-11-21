@@ -51,7 +51,7 @@ class SavedProject {
         ),
       ),
       textClips: List<Map<String, dynamic>>.from(
-        (json['textClips'] as List).map(
+        (json['textClips'] as List? ?? const []).map(
           (item) => Map<String, dynamic>.from(item as Map),
         ),
       ),

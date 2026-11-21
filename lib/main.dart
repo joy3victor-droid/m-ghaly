@@ -2841,7 +2841,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
                             final audioRowsHeight = audioTracks.isEmpty
                                 ? 44.0
                                 : audioTracks.length * 44.0;
-                            final tracksHeight = 26.0 + 58.0 + audioRowsHeight;
+                            final tracksHeight = 26.0 + 58.0 + 44.0 + audioRowsHeight;
 
                             final leftTrackHeaders = Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2918,6 +2918,30 @@ class _ProjectScreenState extends State<ProjectScreen> {
                                           letterSpacing: 1.2,
                                         ),
                                       ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  height: 44,
+                                  alignment: Alignment.center,
+                                  decoration: const BoxDecoration(
+                                    gradient: LinearGradient(colors: [
+                                      Color(0xFF3D2854),
+                                      Color(0xFF251A35),
+                                    ]),
+                                    border: Border(bottom: BorderSide(color: Color(0xFF70469A))),
+                                  ),
+                                  child: const Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.subtitles_rounded, color: Color(0xFFD0A6FF), size: 18),
+                                      SizedBox(width: 5),
+                                      Text('TEXT', style: TextStyle(
+                                        color: Color(0xFFD0A6FF),
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        letterSpacing: 1.1,
+                                      )),
                                     ],
                                   ),
                                 ),
@@ -3648,6 +3672,95 @@ class _ProjectScreenState extends State<ProjectScreen> {
                                             );
                                           },
                                         ),
+                                ),
+
+                                // TEXT TRACK
+                                SizedBox(
+                                  width: timelineWidth,
+                                  height: 44,
+                                  child: Stack(
+                                    children: [
+                                      Positioned.fill(
+                                        child: Container(
+                                          margin: const EdgeInsets.symmetric(vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF171321),
+                                            borderRadius: BorderRadius.circular(6),
+                                            border: Border.all(color: const Color(0xFF49365F)),
+                                          ),
+                                        ),
+                                      ),
+                                      if (textClips.isEmpty)
+                                        const Positioned.fill(
+                                          child: Center(
+                                            child: Text('لا توجد نصوص — أضف نصًا من أدوات النص',
+                                              style: TextStyle(color: Colors.white38, fontSize: 10)),
+                                          ),
+                                        ),
+                                      ...textClips.map((clip) {
+                                        final clipDuration = clip.end - clip.start;
+                                        final durationMs = clipDuration.inMilliseconds
+                                            .clamp(1, math.max(1, totalDuration.inMilliseconds));
+                                        final clipWidth = (durationMs / 1000 * pixelsPerSecond)
+                                            .clamp(28.0, timelineWidth).toDouble();
+                                        final left = (clip.start.inMilliseconds / 1000 * pixelsPerSecond)
+                                            .clamp(0.0, math.max(0.0, timelineWidth - clipWidth)).toDouble();
+
+                                        return Positioned(
+                                          left: left,
+                                          top: 5,
+                                          bottom: 5,
+                                          width: clipWidth,
+                                          child: GestureDetector(
+                                            behavior: HitTestBehavior.opaque,
+                                            onTap: () => unawaited(seekToProjectTime(clip.start)),
+                                            onHorizontalDragUpdate: (details) {
+                                              final index = textClips.indexOf(clip);
+                                              if (index < 0) return;
+                                              final maxStartMs = math.max(
+                                                0, totalDuration.inMilliseconds - clipDuration.inMilliseconds);
+                                              final deltaMs = (details.delta.dx / pixelsPerSecond * 1000).round();
+                                              final nextStart = Duration(milliseconds:
+                                                (clip.start.inMilliseconds + deltaMs).clamp(0, maxStartMs).toInt());
+                                              setState(() {
+                                                textClips[index] = TextClip(
+                                                  text: clip.text,
+                                                  start: nextStart,
+                                                  end: nextStart + clipDuration,
+                                                  position: clip.position,
+                                                  sizeFraction: clip.sizeFraction,
+                                                  colorValue: clip.colorValue,
+                                                );
+                                              });
+                                            },
+                                            child: Container(
+                                              alignment: Alignment.center,
+                                              padding: const EdgeInsets.symmetric(horizontal: 5),
+                                              decoration: BoxDecoration(
+                                                gradient: const LinearGradient(colors: [
+                                                  Color(0xFF7444A5), Color(0xFF432766),
+                                                ]),
+                                                border: Border.all(color: const Color(0xFFD0A6FF)),
+                                                borderRadius: BorderRadius.circular(6),
+                                              ),
+                                              child: Row(
+                                                children: [
+                                                  const Icon(Icons.subtitles_rounded, color: Colors.white, size: 12),
+                                                  const SizedBox(width: 4),
+                                                  Expanded(
+                                                    child: Text(clip.text, maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                      style: const TextStyle(color: Colors.white, fontSize: 9,
+                                                        fontWeight: FontWeight.bold)),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      }),
+                                    ],
+                                  ),
                                 ),
 
                                 // AUDIO TRACKS WITH REAL WAVEFORMS

@@ -603,7 +603,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
     savedProjectId = project.id;
     savedProjectName = project.name;
 
-    timelineScale = project.timelineScale;
+    timelineScale = project.timelineScale.clamp(0.5, 3.0).toDouble();
     selectedIndex = files.isEmpty
         ? 0
         : project.selectedIndex.clamp(0, files.length - 1);

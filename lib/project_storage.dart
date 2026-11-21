@@ -115,10 +115,15 @@ class ProjectStorage {
       flush: true,
     );
 
-    if (await file.exists()) {
-      await file.delete();
+    try {
+      // استبدال الملف مباشرةً دون حذف النسخة السابقة أولاً.
+      await temporaryFile.rename(file.path);
+    } catch (_) {
+      if (await temporaryFile.exists()) {
+        await temporaryFile.delete();
+      }
+      rethrow;
     }
-    await temporaryFile.rename(file.path);
   }
 
   static Future<List<SavedProject>> listProjects() async {

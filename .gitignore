@@ -54,3 +54,8 @@ lib/main_*.dart
 *_log*.txt
 /0
 /=
+
+# GHALY STUDIO release signing secrets
+android/key.properties
+*.keystore
+*.jks
